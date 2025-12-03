@@ -4,8 +4,8 @@
 // @version      1.2.0
 // @description  Autofill Import Licence forms with saved profiles; add/delete profiles from popup UI (Tampermonkey storage).
 // @author       uzi
-// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-licinfo.js
-// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-licinfo.js
+// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-licinfo.user.js
+// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-licinfo.user.js
 // @match        https://oversea.myanmartradenet.com/ImportLicence*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=myanmartradenet.com
 // @grant        GM_getValue
