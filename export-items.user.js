@@ -4,8 +4,8 @@
 // @version      1.2.0
 // @description  Save HS items and auto-run the HS-search → select → description → price → currency workflow. Use HS description as item name.
 // @author       uzi
-// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-items.js
-// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-items.js
+// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-items.user.js
+// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-items.user.js
 // @match        https://oversea.myanmartradenet.com/ExportLicence*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=myanmartradenet.com
 // @grant        GM_getValue
