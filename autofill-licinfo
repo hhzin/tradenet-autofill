@@ -1,0 +1,562 @@
+// ==UserScript==
+// @name         Tradenet Export Autofill v1.2.0
+// @namespace    http://tampermonkey.net/
+// @version      1.2.0
+// @description  Autofill Export Licence form with saved profiles; add/delete profiles; handles country→ports→Add (#porttags); no preview step when saving profiles.
+// @author       uzi
+// @updateURL https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/autofill-licinfo.js
+// @downloadURL https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/autofill-licinfo.js
+// @match        https://oversea.myanmartradenet.com/ExportLicence*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=myanmartradenet.com
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    /*********************************************
+     * CONFIG: Field Selectors (unchanged)
+     *********************************************/
+    const SELECTOR_MAP = {
+        autoRadioValue: { type: 'radio', selector: 'input[name="auto"]' },
+        rbtnSea: { type: 'checkbox', selector: '#rbtnSea' },
+        rbtnAir: { type: 'checkbox', selector: '#rbtnAir' },
+
+        ExportImportSectionId: { type: 'select', selector: '#ExportImportSectionId' },
+        BuyerName: { type: 'input', selector: '#BuyerName' },
+        BuyerAddress: { type: 'input', selector: '#BuyerAddress' },
+        BuyerCountryId: { type: 'select', selector: '#BuyerCountryId' },
+        PortofExportId: { type: 'select', selector: '#PortofExportId' },
+
+        PortofDischargeFilterCountryCode: { type: 'select', selector: '#PortofDischargeFilterCountryCode' },
+        PortofDischargeFilterCode: { type: 'select', selector: '#PortofDischargeFilterCode' },
+        btnAddPort: { type: 'button', selector: '#btnAddPort' },
+        portTags: { type: 'container', selector: '#porttags' },
+
+        ExportImportMethodId: { type: 'select', selector: '#ExportImportMethodId' },
+        CountryofOriginId: { type: 'select', selector: '#CountryofOriginId' },
+        ConsignedCountryId: { type: 'multiselect', selector: '#ConsignedCountryId' },
+        DestinationCountryId: { type: 'select', selector: '#DestinationCountryId' },
+        ExportImportIncotermId: { type: 'select', selector: '#ExportImportIncotermId' }
+    };
+
+    const STORAGE_KEY = "tn_profiles_v1";
+
+    /*********************************************
+     * Storage Helpers
+     *********************************************/
+    function saveProfiles(obj) { GM_setValue(STORAGE_KEY, JSON.stringify(obj)); }
+    function loadProfiles() {
+        try { return JSON.parse(GM_getValue(STORAGE_KEY, "{}")); }
+        catch { return {}; }
+    }
+
+    /*********************************************
+     * Utility Helpers
+     *********************************************/
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+    function triggerChange(el) {
+        if (!el) return;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        if (window.$) {
+            try { $(el).trigger("change").trigger("changed.bs.select"); } catch {}
+        }
+    }
+
+    function refreshSelectpicker(sel) {
+        if (window.$) {
+            try { $(sel).selectpicker("refresh"); } catch {}
+        }
+    }
+
+    function setSelectValue(selector, value) {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+
+        for (const o of el.options) o.selected = false;
+        const opt = el.querySelector(`option[value="${value}"]`);
+        if (opt) opt.selected = true;
+
+        refreshSelectpicker(selector);
+        triggerChange(el);
+        return !!opt;
+    }
+
+    function setMultiSelect(selector, values) {
+        const el = document.querySelector(selector);
+        if (!el) return;
+
+        for (const o of el.options) o.selected = false;
+        values.forEach(v => {
+            const opt = el.querySelector(`option[value="${v}"]`);
+            if (opt) opt.selected = true;
+        });
+
+        refreshSelectpicker(selector);
+        triggerChange(el);
+    }
+
+    function waitForCondition(checkFn, timeout = 10000, interval = 200) {
+        const start = Date.now();
+        return new Promise((resolve, reject) => {
+            (function loop() {
+                try { if (checkFn()) return resolve(true); } catch {}
+                if (Date.now() - start > timeout) return reject("timeout");
+                setTimeout(loop, interval);
+            })();
+        });
+    }
+
+    /*********************************************
+     * PORT TAG FUNCTIONS (unchanged)
+     *********************************************/
+    function getPortNamesFromTags() {
+        const tags = document.querySelectorAll("#porttags .tag");
+        return Array.from(tags).map(t => (t.firstChild?.nodeValue || t.textContent).trim());
+    }
+
+    function mapPortNamesToCodes(names) {
+        const dd = document.querySelector("#PortofDischargeFilterCode");
+        if (!dd) return {};
+
+        const map = {};
+        for (const opt of dd.options) {
+            const t = opt.textContent.trim();
+            if (names.includes(t)) map[t] = opt.value;
+        }
+        return map;
+    }
+
+    /*********************************************
+     * READ FORM INTO PROFILE OBJECT
+     *********************************************/
+    function readForm() {
+        const out = {};
+
+        for (const key in SELECTOR_MAP) {
+            const {type, selector} = SELECTOR_MAP[key];
+            const el = document.querySelector(selector);
+
+            if (!el) {
+                out[key] = type === "multiselect" ? [] : "";
+                continue;
+            }
+
+            switch(type) {
+                case 'input': out[key] = el.value.trim(); break;
+                case 'select': out[key] = el.value; break;
+                case 'multiselect':
+                    out[key] = [...el.options].filter(o => o.selected).map(o => o.value);
+                    break;
+                case 'checkbox': out[key] = el.checked; break;
+                case 'radio':
+                    const radios = document.querySelectorAll(selector);
+                    let selVal = null;
+                    radios.forEach(r => { if (r.checked) selVal = r.value; });
+                    out[key] = selVal;
+                    break;
+                default:
+                    out[key] = el.value || "";
+            }
+        }
+
+        // Ports
+        const portNames = getPortNamesFromTags();
+        out.savedPortNames = portNames;
+        const mapping = mapPortNamesToCodes(portNames);
+        out.savedPortCodes = portNames.map(n => mapping[n]).filter(Boolean);
+
+        return out;
+    }
+
+    /*********************************************
+     * FILL PROFILE
+     *********************************************/
+    async function fillPorts(profile) {
+        const names = profile.savedPortNames || [];
+        const codes = profile.savedPortCodes || [];
+
+        const fullMap = codes.length === names.length && codes.length > 0;
+
+        if (fullMap) {
+            for (let i = 0; i < codes.length; i++) {
+                const code = codes[i];
+
+                try {
+                    await waitForCondition(() => {
+                        const dd = document.querySelector("#PortofDischargeFilterCode");
+                        return dd && dd.querySelector(`option[value="${code}"]`);
+                    }, 8000);
+                } catch {}
+
+                const dd = document.querySelector("#PortofDischargeFilterCode");
+                if (!dd) continue;
+
+                const opt = dd.querySelector(`option[value="${code}"]`);
+                if (opt) {
+                    dd.value = code;
+                    refreshSelectpicker(dd);
+                    triggerChange(dd);
+
+                    const btn = document.querySelector("#btnAddPort");
+                    if (btn) btn.click();
+
+                    await sleep(200);
+                    continue;
+                }
+
+                // fallback by name
+                const name = names[i];
+                const byName = [...dd.options].find(o => o.textContent.trim() === name);
+                if (byName) {
+                    dd.value = byName.value;
+                    refreshSelectpicker(dd);
+                    triggerChange(dd);
+                    const btn = document.querySelector("#btnAddPort");
+                    if (btn) btn.click();
+                    await sleep(200);
+                }
+            }
+        } else {
+            for (const name of names) {
+                try {
+                    await waitForCondition(() => {
+                        const dd = document.querySelector("#PortofDischargeFilterCode");
+                        return dd && [...dd.options].some(o => o.textContent.trim() === name);
+                    }, 8000);
+                } catch {}
+
+                const dd = document.querySelector("#PortofDischargeFilterCode");
+                if (!dd) continue;
+
+                const opt = [...dd.options].find(o => o.textContent.trim() === name);
+                if (opt) {
+                    dd.value = opt.value;
+                    refreshSelectpicker(dd);
+                    triggerChange(dd);
+                    const btn = document.querySelector("#btnAddPort");
+                    if (btn) btn.click();
+                    await sleep(200);
+                }
+            }
+        }
+    }
+
+    async function fillProfile(p) {
+        if (!p) return;
+
+        // Radios
+        if (p.autoRadioValue) {
+            const r = document.querySelector(`input[name="auto"][value="${p.autoRadioValue}"]`);
+            if (r) { r.checked = true; triggerChange(r); }
+        }
+
+        // Checkbox
+        ['rbtnSea', 'rbtnAir'].forEach(k => {
+            const el = document.querySelector(SELECTOR_MAP[k].selector);
+            if (el) { el.checked = !!p[k]; triggerChange(el); }
+        });
+
+        // Basic
+        if (p.ExportImportSectionId) setSelectValue("#ExportImportSectionId", p.ExportImportSectionId);
+
+        if (p.BuyerName) {
+            const el = document.querySelector("#BuyerName");
+            if (el) { el.value = p.BuyerName; triggerChange(el); }
+        }
+
+        if (p.BuyerAddress) {
+            const el = document.querySelector("#BuyerAddress");
+            if (el) { el.value = p.BuyerAddress; triggerChange(el); }
+        }
+
+        if (p.BuyerCountryId) setSelectValue("#BuyerCountryId", p.BuyerCountryId);
+        if (p.PortofExportId) setSelectValue("#PortofExportId", p.PortofExportId);
+
+        if (p.PortofDischargeFilterCountryCode) {
+            setSelectValue("#PortofDischargeFilterCountryCode", p.PortofDischargeFilterCountryCode);
+            await sleep(300);
+            await fillPorts(p);
+        }
+
+        if (p.ExportImportMethodId) setSelectValue("#ExportImportMethodId", p.ExportImportMethodId);
+        if (p.CountryofOriginId) setSelectValue("#CountryofOriginId", p.CountryofOriginId);
+
+        if (Array.isArray(p.ConsignedCountryId))
+            setMultiSelect("#ConsignedCountryId", p.ConsignedCountryId);
+
+        if (p.DestinationCountryId) setSelectValue("#DestinationCountryId", p.DestinationCountryId);
+        if (p.ExportImportIncotermId) setSelectValue("#ExportImportIncotermId", p.ExportImportIncotermId);
+    }
+
+    /*********************************************
+     * UI PANEL (movable + collapsible) - keeps your current styling (Option B)
+     *********************************************/
+    function chooseProfileToDelete(profiles) {
+        return new Promise(resolve => {
+            const wrapper = document.createElement("div");
+            wrapper.style = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border: 1px solid #888;
+            padding: 16px;
+            z-index: 999999999;
+            width: 260px;
+            border-radius: 6px;
+            font-family: Arial;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        `;
+
+            wrapper.innerHTML = `
+            <div style="margin-bottom:8px; font-weight:bold;">Delete Profile</div>
+            <select id="deleteProfileSelect" style="width:100%; padding:6px; margin-bottom:12px;">
+                <option value="">Choose profile...</option>
+                ${Object.keys(profiles).map(p => `<option>${p}</option>`).join("")}
+            </select>
+
+            <div style="display:flex; justify-content:space-between;">
+                <button id="delCancel" style="padding:6px 10px;">Cancel</button>
+                <button id="delConfirm" style="padding:6px 10px;">Delete</button>
+            </div>
+        `;
+
+            document.body.appendChild(wrapper);
+
+            wrapper.querySelector("#delCancel").onclick = () => {
+                wrapper.remove();
+                resolve(null);
+            };
+
+            wrapper.querySelector("#delConfirm").onclick = () => {
+                const pick = wrapper.querySelector("#deleteProfileSelect").value;
+                wrapper.remove();
+                resolve(pick || null);
+            };
+        });
+    }
+
+    function createMenu() {
+        // remove existing if present
+        const old = document.getElementById("autofillMenu");
+        if (old) old.remove();
+
+        const panel = document.createElement("div");
+        panel.id = "autofillMenu";
+        panel.style = `
+            position: fixed;
+            top: 110px;
+            right: 40px;
+            width: 300px;
+            background: #ffffff;
+            border: 1px solid #aaa;
+            border-radius: 6px;
+            padding: 0;
+            z-index: 999999;
+            font-family: Arial;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        `;
+
+        panel.innerHTML = `
+            <div id="autofillHeader" style="
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                padding: 8px;
+                background: #f0f0f0;
+                border-bottom: 1px solid #ccc;
+                cursor: grab;
+                font-weight: bold;
+            ">
+                <div id="autofillTitle" style="user-select:none;">Export Autofill</div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                </div>
+            </div>
+
+            <div id="autofillBody" style="padding: 12px;">
+                <div style="display:flex; gap:6px; margin-bottom:8px;">
+                    <select id="templateSelect" style="flex:1; padding:6px;">
+                        <option value="">Choose profile...</option>
+                    </select>
+                    <button id="btnFill" style="padding:6px;">Fill</button>
+                </div>
+
+                <div style="display:flex; gap:6px; margin-bottom:8px;">
+                    <button id="btnAddProfile" style="flex:1; padding:6px;">Add Profile</button>
+                    <button id="btnDeleteProfile" style="flex:1; padding:6px;">Delete</button>
+                </div>
+
+                <div id="msg" style="margin-top:8px; font-size:12px; color:#444;"></div>
+            </div>
+        `;
+
+        document.body.appendChild(panel);
+
+        // wire up behavior
+        makePanelDraggable(panel, panel.querySelector('#autofillHeader'));
+        populateDropdown();
+
+        document.getElementById("btnFill").addEventListener("click", async () => {
+            const name = document.getElementById("templateSelect").value;
+            if (!name) return showMessage("Choose a profile first.");
+            const profiles = loadProfiles();
+            if (!profiles[name]) return showMessage("Profile not found.");
+            showMessage("Filling...");
+            try {
+                await fillProfile(profiles[name]);
+                showMessage("Done.");
+            } catch (e) {
+                showMessage("Error: " + e);
+            }
+        });
+
+        document.getElementById("btnAddProfile").addEventListener("click", () => {
+            const snapshot = readForm();
+            const name = prompt("Profile name?");
+            if (!name) return;
+            const profiles = loadProfiles();
+            if (profiles[name] && !confirm("Overwrite?")) return;
+            profiles[name] = snapshot;
+            saveProfiles(profiles);
+            populateDropdown();
+            showMessage("Saved: " + name);
+        });
+
+        document.getElementById("btnDeleteProfile").addEventListener("click", async () => {
+            const profiles = loadProfiles();
+            const names = Object.keys(profiles);
+
+            if (!names.length) {
+                alert("No profiles saved.");
+                return;
+            }
+
+            const pick = await chooseProfileToDelete(profiles);
+            if (!pick) return; // cancelled
+
+            if (!profiles[pick]) {
+                alert("Profile not found.");
+                return;
+            }
+
+            delete profiles[pick];
+            saveProfiles(profiles);
+            populateDropdown();
+            showMessage("Deleted: " + pick);
+        });
+    }
+
+    // --- fixed draggable function: no jumping, works like Import panel ---
+    function makePanelDraggable(panel, handle) {
+        let active = false;
+        let startX = 0, startY = 0;
+        let startLeft = 0, startTop = 0;
+
+        handle.addEventListener("pointerdown", e => {
+            active = true;
+            handle.setPointerCapture(e.pointerId);
+
+            // compute live position from screen, not from style
+            const rect = panel.getBoundingClientRect();
+
+            startLeft = rect.left;
+            startTop  = rect.top;
+
+            // set explicit styles so dragging is consistent
+            panel.style.left = startLeft + "px";
+            panel.style.top  = startTop  + "px";
+            panel.style.right = "auto";     // important: disable RIGHT anchoring
+
+            startX = e.clientX;
+            startY = e.clientY;
+
+            handle.style.cursor = "grabbing";
+            e.preventDefault();
+        });
+
+        handle.addEventListener("pointermove", e => {
+            if (!active) return;
+
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            panel.style.left = (startLeft + dx) + "px";
+            panel.style.top  = (startTop  + dy) + "px";
+            panel.style.right = "auto";
+        });
+
+        handle.addEventListener("pointerup", e => {
+            active = false;
+            handle.style.cursor = "grab";
+            try { handle.releasePointerCapture(e.pointerId); } catch {}
+        });
+
+        handle.addEventListener("pointercancel", () => {
+            active = false;
+            handle.style.cursor = "grab";
+        });
+    }
+
+
+    function populateDropdown() {
+        const sel = document.getElementById("templateSelect");
+        if (!sel) return;
+        sel.innerHTML = `<option value="">Choose profile...</option>`;
+        const profiles = loadProfiles();
+        Object.keys(profiles).forEach(name => {
+            const op = document.createElement("option");
+            op.value = op.textContent = name;
+            sel.appendChild(op);
+        });
+    }
+
+    function showMessage(msg) {
+        const el = document.getElementById("msg");
+        if (el) el.textContent = msg;
+    }
+
+    function isVisible(el) {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+
+        return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none"
+        );
+    }
+
+    function toggleAutofillPanelVisibility() {
+        const panel = document.getElementById("autofillMenu");
+        if (!panel) return;
+
+        // MAIN form only when this radio is *actually visible*
+        const autoRadio = document.querySelector('input[name="auto"]');
+
+        if (isVisible(autoRadio)) {
+            // Main form page
+            panel.style.display = "block";
+        } else {
+            // HS section page
+            panel.style.display = "none";
+        }
+    }
+
+
+    /*********************************************
+     * INIT
+     *********************************************/
+    createMenu();
+    populateDropdown();
+    toggleAutofillPanelVisibility();
+
+    setInterval(toggleAutofillPanelVisibility, 800);
+})();
