@@ -4,8 +4,8 @@
 // @version      1.2.0
 // @description  Save HS items and auto-run the HS-search → select → description → unit (text) → price → quantity → currency → Add workflow. Movable + collapsible UI.
 // @author       uzi
-// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-items.js
-// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-items.js
+// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-items.user.js
+// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/import-items.user.js
 // @match        https://oversea.myanmartradenet.com/ImportLicence*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=myanmartradenet.com
 // @grant        GM_getValue
