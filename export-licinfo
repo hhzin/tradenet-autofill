@@ -4,8 +4,8 @@
 // @version      1.2.0
 // @description  Autofill Export Licence form with saved profiles; add/delete profiles; handles country→ports→Add (#porttags); no preview step when saving profiles.
 // @author       uzi
-// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/autofill-licinfo.js
-// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/autofill-licinfo.js
+// @updateURL    https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-licinfo.js
+// @downloadURL  https://raw.githubusercontent.com/hhzin/tradenet-autofill/main/export-licinfo.js
 // @match        https://oversea.myanmartradenet.com/ExportLicence*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=myanmartradenet.com
 // @grant        GM_getValue
