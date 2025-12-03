@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Tradenet Export Autofill v1.2.0
+// @name         Tradenet Export License Information
 // @namespace    http://tampermonkey.net/
 // @version      1.2.0
 // @description  Autofill Export Licence form with saved profiles; add/delete profiles; handles country→ports→Add (#porttags); no preview step when saving profiles.
